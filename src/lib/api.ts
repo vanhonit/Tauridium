@@ -168,6 +168,7 @@ export interface AppMetadata {
   repository: string;
   license: string;
   author: string;
+  os: string;
 }
 
 export function getAppMetadata(): Promise<AppMetadata> {
@@ -176,6 +177,21 @@ export function getAppMetadata(): Promise<AppMetadata> {
 
 export function openExternalUrl(url: string): Promise<void> {
   return invoke("open_external_url", { url });
+}
+
+// macOS only: open a Safari-backed sign-in session so hardware security keys
+// (YubiKey / WebAuthn roaming authenticators) can be used. Resolves to the captured
+// callback URL, or `null` when the user cancels.
+export function openWebAuthSession(
+  authUrl: string,
+  callbackUrlScheme: string,
+  ephemeral = false,
+): Promise<string | null> {
+  return invoke("open_web_auth_session", {
+    authUrl,
+    callbackUrlScheme,
+    ephemeral,
+  });
 }
 
 export function reloadActiveService(): Promise<void> {

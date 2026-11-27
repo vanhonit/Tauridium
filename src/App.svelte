@@ -111,6 +111,7 @@
     clearAuditLog,
     getAppMetadata,
     openExternalUrl,
+    openWebAuthSession,
     reloadTauridium,
     showServiceToastOverlay,
     setServiceZoom,
@@ -262,6 +263,25 @@
   const pendingReloadToasts = new Map<string, string>();
   let appMetadata = $state<AppMetadata | null>(null);
   const projectRepository = $derived((appMetadata?.repository || "https://github.com/Akkitto/Tauridium").replace(/\/$/, ""));
+  const isMac = $derived(appMetadata?.os === "macos");
+
+  // TEMPORARY test affordance for the macOS hardware-key auth session. Remove this
+  // once a real per-service OAuth sign-in trigger is wired.
+  let authSessionTestResult = $state<string | null>(null);
+  async function testAuthSession() {
+    authSessionTestResult = "opening…";
+    try {
+      const url = await openWebAuthSession(
+        "https://httpbin.org/redirect-to?url=" +
+          encodeURIComponent("tauridium://callback?code=abc123&state=x"),
+        "tauridium",
+        false,
+      );
+      authSessionTestResult = url === null ? "cancelled (window closed)" : `callback: ${url}`;
+    } catch (error) {
+      authSessionTestResult = `error: ${String(error)}`;
+    }
+  }
 
   let newSandboxName = $state("");
   let sandboxServiceQuery = $state("");
@@ -4352,7 +4372,21 @@
             <h2>Add a service</h2>
             <button class="link" onclick={backToService}>✕ close</button>
           </div>
-          <p class="notice">⚠️ Passkey / biometric sign-in (Touch ID, security keys) isn't supported in the embedded webview. On a service's login screen, choose "try another way" and use a password + authenticator code (TOTP) or a phone prompt instead.</p>
+          <p class="notice">
+            {#if isMac}
+              ⚠️ Passkeys / Touch ID aren't supported in the embedded webview on macOS, and hardware security keys (YubiKey) require a Safari sign-in window rather than the embedded view.
+            {:else}
+              ⚠️ Passkey / biometric sign-in (Touch ID, security keys) isn't supported in the embedded webview. On a service's login screen, choose "try another way" and use a password + authenticator code (TOTP) or a phone prompt instead.
+            {/if}
+          </p>
+
+          {#if isMac}
+            <!-- TEMPORARY: remove with the test affordance in testAuthSession(). -->
+            <div class="notice">
+              <button class="secondary sm" onclick={() => void testAuthSession()}>Test hardware-key sign-in</button>
+              {#if authSessionTestResult}<p class="sub">Result: {authSessionTestResult}</p>{/if}
+            </div>
+          {/if}
 
           <div class="add-tabs" role="tablist" aria-label="Add service method">
             <button class:active={addMode === "catalog"} onclick={() => (addMode = "catalog")}>Recipes</button>

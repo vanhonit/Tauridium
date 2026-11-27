@@ -205,6 +205,23 @@ describe("external links", () => {
   });
 });
 
+describe("hardware-key auth session", () => {
+  beforeEach(() => {
+    mocks.invoke.mockReset();
+    mocks.invoke.mockResolvedValue(undefined);
+  });
+
+  it("starts a Safari-backed auth session with the callback scheme and non-ephemeral default", async () => {
+    const { openWebAuthSession } = await import("./api");
+    await openWebAuthSession("https://idp.example/authorize", "tauridium");
+    expect(mocks.invoke).toHaveBeenCalledWith("open_web_auth_session", {
+      authUrl: "https://idp.example/authorize",
+      callbackUrlScheme: "tauridium",
+      ephemeral: false,
+    });
+  });
+});
+
 describe("service icon cache commands", () => {
   beforeEach(() => {
     mocks.invoke.mockReset();

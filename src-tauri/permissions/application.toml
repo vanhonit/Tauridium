@@ -57,6 +57,7 @@ commands.allow = [
   "export_audit_log",
   "clear_audit_log",
   "open_external_url",
+  "open_web_auth_session",
   "get_app_metadata",
   "get_window_chrome",
   "reload_active_service_command",

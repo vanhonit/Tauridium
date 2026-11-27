@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod audit;
+#[cfg(target_os = "macos")]
+mod auth_session;
 mod backup;
 mod browser_privacy;
 mod credentials;
@@ -1837,6 +1839,19 @@ fn open_external_url(url: String) -> Result<(), String> {
         return Err("External links must use HTTP or HTTPS".to_string());
     }
     open_external(parsed.as_str())
+}
+
+// Open a Safari-backed sign-in session on macOS so hardware security keys (YubiKey,
+// WebAuthn roaming authenticators) can be used. The embedded WKWebView cannot reach them.
+// Returns the captured callback URL, or `None` when the user cancels.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn open_web_auth_session(
+    auth_url: String,
+    callback_url_scheme: String,
+    ephemeral: Option<bool>,
+) -> Result<Option<String>, String> {
+    auth_session::start_session(auth_url, callback_url_scheme, ephemeral.unwrap_or(false)).await
 }
 
 fn show_system_notification(
@@ -5482,6 +5497,7 @@ struct AppMetadata {
     repository: &'static str,
     license: &'static str,
     author: &'static str,
+    os: &'static str,
 }
 
 #[tauri::command]
@@ -5493,6 +5509,7 @@ fn get_app_metadata() -> AppMetadata {
         repository: env!("CARGO_PKG_REPOSITORY"),
         license: env!("CARGO_PKG_LICENSE"),
         author: env!("CARGO_PKG_AUTHORS"),
+        os: std::env::consts::OS,
     }
 }
 
@@ -5967,6 +5984,8 @@ fn main() {
             export_audit_log,
             clear_audit_log,
             open_external_url,
+            #[cfg(target_os = "macos")]
+            open_web_auth_session,
             get_app_metadata,
             get_window_chrome,
             open_window_menu,
