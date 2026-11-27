@@ -1,6 +1,7 @@
 param([Parameter(Mandatory = $true)][string]$Binary, [string]$Output = "release/evidence/windows-titlebar", [switch]$CaptureCaptionPreview)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'windows_fixture_server.ps1')
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'This GUI gate requires a fresh GitHub-hosted Windows CI user profile.' }
 $Binary = (Resolve-Path -LiteralPath $Binary).Path
 $ProfileRoot = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'dev.brani.tauridium'
@@ -171,7 +172,9 @@ public static class ChromeNative {
   public static void ClickPoint(IntPtr owner,int x,int y,bool right) {
     Point p=new Point(); p.X=x; p.Y=y;
     if (GetAncestor(WindowFromPoint(p),2)!=owner) throw new InvalidOperationException("Refusing to click outside the test window.");
+    if (GetForegroundWindow()!=owner) throw new InvalidOperationException("Refusing to click a background test window.");
     if (!SetCursorPos(x,y)) throw new InvalidOperationException("Unable to position the test pointer.");
+    if (GetForegroundWindow()!=owner || GetAncestor(WindowFromPoint(p),2)!=owner) throw new InvalidOperationException("Test window lost foreground or point ownership before input.");
     Input down=new Input(), up=new Input(); down.Data.Mouse.Flags=right?8u:2u; up.Data.Mouse.Flags=right?16u:4u;
     if (SendInput(2,new Input[]{down,up},Marshal.SizeOf(typeof(Input)))!=2) throw new InvalidOperationException("Test pointer input was blocked.");
   }
@@ -437,9 +440,146 @@ function Outer-Size {
 }
 function Open-Advanced {
   Activate-Tauridium
+  # UIA Invoke completes before account-free startup finishes and does not move
+  # keyboard focus out of the separate title-bar webview. Wait for the local
+  # shell, then focus a harmless shell control before sending its shortcut.
+  Wait-For {
+    $Control=Find-Control 'Collapse sidebar' ([Windows.Automation.ControlType]::Button)
+    $Control -and $Control.Current.IsEnabled -and -not $Control.Current.IsOffscreen
+  } 'ready local sidebar'
+  (Find-Control 'Collapse sidebar' ([Windows.Automation.ControlType]::Button)).SetFocus()
+  Wait-For {
+    $Control=Find-Control 'Collapse sidebar' ([Windows.Automation.ControlType]::Button)
+    $Control -and $Control.Current.HasKeyboardFocus
+  } 'main shell keyboard focus'
   [Windows.Forms.SendKeys]::SendWait('^,')
   Invoke-Control 'Advanced'
   Wait-For { $null -ne (Find-Control 'Unified title bar' ([Windows.Automation.ControlType]::CheckBox)) } 'title-bar setting'
+}
+function Search-Settings-Value {
+  $Control = Find-Control 'Search settings'
+  if ($null -eq $Control) { return $null }
+  $Pattern = $null
+  if (-not $Control.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern,[ref]$Pattern)) {
+    throw 'Editable Settings search must expose the accessible Value pattern.'
+  }
+  return $Pattern.Current.Value
+}
+function Search-Settings-For([string]$Query, [string]$SelectionKeys = '{ENTER}') {
+  Activate-Tauridium
+  [Windows.Forms.SendKeys]::SendWait('^f')
+  [Windows.Forms.SendKeys]::SendWait($Query)
+  Wait-For { (Search-Settings-Value) -eq $Query } 'scoped Ctrl+F focuses Settings search'
+  [Windows.Forms.SendKeys]::SendWait($SelectionKeys)
+}
+function Test-Settings-Search {
+  # Navigation must not edit a setting, start an action, or persist the query.
+  $Before = (Read-Settings | ConvertTo-Json -Depth 20 -Compress)
+  Search-Settings-For 'show service names'
+  Wait-For { [Windows.Automation.AutomationElement]::FocusedElement.Current.Name -eq 'Show service names' } 'search opens Services and focuses its exact control'
+  Search-Settings-For 'theme'
+  Wait-For { [Windows.Automation.AutomationElement]::FocusedElement.Current.Name -eq 'Theme' } 'search opens Appearance and focuses Theme'
+  Search-Settings-For 'sidebar spacing' '{DOWN}{ENTER}'
+  Wait-For { [Windows.Automation.AutomationElement]::FocusedElement.Current.Name -eq 'Expanded service item spacing' } 'arrow navigation selects the second matching setting'
+  Search-Settings-For 'unified title bar'
+  Wait-For { [Windows.Automation.AutomationElement]::FocusedElement.Current.Name -eq 'Unified title bar' } 'search exposes the Windows title-bar setting'
+  Search-Settings-For 'Advanced'
+  Wait-For {
+    $Control = Find-Control 'Unified title bar' ([Windows.Automation.ControlType]::CheckBox)
+    $null -ne $Control -and -not $Control.Current.IsOffscreen
+  } 'whole-tab search opens the first Settings section'
+  Check ((Read-Settings | ConvertTo-Json -Depth 20 -Compress) -eq $Before) 'Settings search navigation leaves persisted preferences unchanged'
+  [Windows.Forms.SendKeys]::SendWait('^f')
+  Invoke-Control 'Clear settings search'
+  Wait-For { (Search-Settings-Value) -eq '' } 'clear search clears its actual editable value'
+}
+function Invoke-Support-Clipboard($Worker, [bool]$Write, [string]$Value = '') {
+  $Worker.Commands.Clear()
+  $Worker.Streams.Error.Clear()
+  if ($Write) {
+    [void]$Worker.AddScript('param($Text) [Windows.Forms.Clipboard]::SetText($Text)').AddArgument($Value)
+  } else {
+    [void]$Worker.AddScript('[Windows.Forms.Clipboard]::GetText()')
+  }
+  $Values = @($Worker.Invoke())
+  if ($Worker.HadErrors) { throw 'The isolated support clipboard fixture failed.' }
+  if (-not $Write) {
+    if ($Values.Count -eq 0) { return '' }
+    return ([string]$Values[0]).Replace("`r`n", "`n")
+  }
+}
+function Test-Support-Information {
+  if (-not ('SupportClipboardLock' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class SupportClipboardLock {
+  [DllImport("user32.dll", SetLastError=true)]
+  public static extern bool OpenClipboard(IntPtr owner);
+  [DllImport("user32.dll", SetLastError=true)]
+  public static extern bool CloseClipboard();
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetOpenClipboardWindow();
+}
+'@
+  }
+  # Use an explicit STA worker on both PowerShell 5.1 and 7. Every clipboard read
+  # follows a write of this fixture's own canary/report, never private user data.
+  $Space = [RunspaceFactory]::CreateRunspace()
+  $Space.ApartmentState = 'STA'
+  $Space.ThreadOptions = 'ReuseThread'
+  $Space.Open()
+  $Worker = [PowerShell]::Create()
+  $Worker.Runspace = $Space
+  try {
+    [void]$Worker.AddScript('Add-Type -AssemblyName System.Windows.Forms').Invoke()
+    if ($Worker.HadErrors) { throw 'Clipboard fixture initialization failed.' }
+    Invoke-Support-Clipboard $Worker $true 'synthetic support clipboard canary'
+    $Before = Read-Settings | ConvertTo-Json -Depth 20 -Compress
+    Search-Settings-For 'support information'
+    Wait-For { $null -ne (Find-Control 'Copy support information') } 'support report action'
+    Check ((Invoke-Support-Clipboard $Worker $false) -ceq 'synthetic support clipboard canary') 'support navigation does not copy automatically'
+    Invoke-Control 'Copy support information'
+    Wait-For { $null -ne (Find-Control 'Support information copied.') } 'native support copy acknowledgement'
+    $Report = Invoke-Support-Clipboard $Worker $false
+    Check ($Report.StartsWith("``````text`nTauridium support information`n")) 'native support report reaches the Windows clipboard'
+    Check ($Report.Contains('Build mode: production') -and $Report.Contains('WebView engine: WebView2')) 'support report identifies the real Windows production runtime'
+    Check (-not $Report.Contains($ProfileRoot) -and -not $Report.Contains('synthetic support clipboard canary')) 'support report excludes profile paths and previous clipboard data'
+    Invoke-Control 'Preview support information'
+    Wait-For { $null -ne (Find-Control 'Support information preview') } 'selectable support preview'
+    $Preview = Find-Control 'Support information preview'
+    $Pattern = $Preview.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
+    Check $Pattern.Current.IsReadOnly 'support preview is read only'
+    Check ($Pattern.Current.Value.Replace("`r`n", "`n") -ceq $Report) 'support preview exactly matches the copied report'
+    Invoke-Support-Clipboard $Worker $true 'synthetic manual-copy canary'
+    Activate-Tauridium
+    $Preview.SetFocus()
+    Wait-For { [Windows.Automation.AutomationElement]::FocusedElement.Current.Name -eq 'Support information preview' } 'support preview keyboard focus'
+    [Windows.Forms.SendKeys]::SendWait('^a^c')
+    Wait-For { (Invoke-Support-Clipboard $Worker $false) -ceq $Report } 'manual support preview copy fallback'
+    # A NULL owner allows another NULL-owner opener on Windows. Associate the
+    # lock with our real fixture window so it actually blocks native copying.
+    if (-not [SupportClipboardLock]::OpenClipboard($script:Window)) {
+      throw 'Could not establish the controlled clipboard-busy fixture.'
+    }
+    try {
+      Check ([SupportClipboardLock]::GetOpenClipboardWindow() -eq $script:Window) 'controlled fixture holds the named clipboard lock'
+      Invoke-Control 'Copy support information'
+      Wait-For { $null -ne (Find-Control 'Unable to copy support information. Open the preview and copy it manually, or try again.') } 'clipboard-busy manual fallback'
+      Check ((Find-Control 'Copy support information').Current.IsEnabled) 'copy action recovers after a native clipboard failure'
+      Check ($Pattern.Current.Value.Replace("`r`n", "`n") -ceq $Report) 'clipboard failure preserves the selectable preview'
+    } finally {
+      [void][SupportClipboardLock]::CloseClipboard()
+    }
+    Check ((Invoke-Support-Clipboard $Worker $false) -ceq $Report) 'a busy clipboard does not erase its previous report'
+    Invoke-Control 'Copy support information'
+    Wait-For { $null -ne (Find-Control 'Support information copied.') } 'native clipboard retry'
+    Check ((Read-Settings | ConvertTo-Json -Depth 20 -Compress) -ceq $Before) 'support report collection does not persist settings'
+    Search-Settings-For 'Advanced'
+  } finally {
+    $Worker.Dispose()
+    $Space.Dispose()
+  }
 }
 function Read-Settings([string]$Path = $Settings) {
   $Stream = [IO.File]::Open($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
@@ -468,13 +608,41 @@ function Visible-Service-Item([string]$Name) {
   if ($Control -and -not $Control.Current.IsOffscreen) { return $Control }
   return $null
 }
-function Open-Service-Menu {
+function Click-Service-Row {
   Activate-Tauridium
-  $Row=Find-Control 'Beta fixture' ([Windows.Automation.ControlType]::Button)
-  if (-not $Row) { throw 'Missing synthetic sidebar service.' }
-  $R=$Row.Current.BoundingRectangle
-  [ChromeNative]::ClickPoint($script:Window,[int]($R.Right-8),[int]($R.Top+$R.Height/2),$true)
-  Wait-For { $null -ne (Visible-Service-Item 'Duplicate') } 'styled service menu'
+  $Probe=@{ Geometry=$null; Since=$null; Point=$null }
+  # A rendered service document does not mean the sibling sidebar has settled
+  # after native restore/DPI/layout. Wait for fresh UIA geometry and real native
+  # point ownership; never relax ClickPoint's final fail-closed ownership check.
+  Wait-For {
+    if ([ChromeNative]::GetForegroundWindow() -ne $script:Window) { $Probe.Since=$null; return $false }
+    $Row=Find-Control 'Beta fixture' ([Windows.Automation.ControlType]::Button)
+    if (-not $Row -or $Row.Current.IsOffscreen) { $Probe.Since=$null; return $false }
+    $R=$Row.Current.BoundingRectangle
+    if ($R.IsEmpty -or $R.Width -le 16 -or $R.Height -le 0) { $Probe.Since=$null; return $false }
+    foreach ($Value in @($R.Left,$R.Top,$R.Right,$R.Bottom)) {
+      if ([Double]::IsNaN($Value) -or [Double]::IsInfinity($Value)) { $Probe.Since=$null; return $false }
+    }
+    $Point=New-Object ChromeNative+Point
+    $Point.X=[int]($R.Right-8); $Point.Y=[int]($R.Top+$R.Height/2)
+    if (-not [ChromeNative]::OwnsPoint($script:Window,$Point)) { $Probe.Since=$null; return $false }
+    $Geometry='{0},{1},{2},{3}' -f $Point.X,$Point.Y,$R.Width,$R.Height
+    if ($Probe.Geometry -ne $Geometry -or $null -eq $Probe.Since) {
+      $Probe.Geometry=$Geometry; $Probe.Since=[DateTime]::UtcNow
+    }
+    $Probe.Point=$Point
+    return ([DateTime]::UtcNow-$Probe.Since).TotalMilliseconds -ge 300
+  } 'stable uncovered synthetic sidebar service'
+  [ChromeNative]::ClickPoint($script:Window,$Probe.Point.X,$Probe.Point.Y,$true)
+}
+function Open-Service-Menu {
+  Click-Service-Row
+  Wait-For {
+    if ([ChromeNative]::GetForegroundWindow() -ne $script:Window) {
+      throw ('Test window lost foreground while opening the styled service menu: '+[ChromeNative]::WindowMetadata([ChromeNative]::GetForegroundWindow()))
+    }
+    $null -ne (Visible-Service-Item 'Duplicate')
+  } 'styled service menu'
   if ([ChromeNative]::HasPopup($script:Child.Id)) { throw 'Styled menu unexpectedly used the system fallback.' }
 }
 function Test-Service-Pixel([int]$X,[int]$Y) {
@@ -494,9 +662,9 @@ function Test-Service-Menus {
   $Listener=New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback,0)
   $Listener.Start(); $Port=$Listener.LocalEndpoint.Port; $Listener.Stop()
   $Python=(Get-Command python.exe -ErrorAction Stop).Source
-  $Server=Start-Process -FilePath $Python -ArgumentList @('-I','-m','http.server',"$Port",'--bind','127.0.0.1','--directory',('"{0}"' -f $Fixture)) -PassThru -RedirectStandardOutput (Join-Path $Fixture 'server.log') -RedirectStandardError (Join-Path $Fixture 'server-errors.log')
+  $Server=Start-HttpFixtureServer -Python $Python -Directory $Fixture -Port $Port
   try {
-    Wait-For { try { (Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$Port/fixture.html" -TimeoutSec 2).StatusCode -eq 200 } catch { $false } } 'local synthetic service fixture'
+    Wait-HttpFixtureServer $Server
     $Services=@(
       @{id='menu-alpha';name='Alpha fixture';recipeId='custom-website';isEnabled=$true;isLocalRecipe=$true;order=0;customUrl="http://127.0.0.1:$Port/fixture.html?alpha"},
       @{id='menu-beta';name='Beta fixture';recipeId='custom-website';isEnabled=$true;isLocalRecipe=$true;order=1;customUrl="http://127.0.0.1:$Port/fixture.html?beta"}
@@ -513,17 +681,15 @@ function Test-Service-Menus {
       Start-Tauridium
       Wait-For { $null -ne (Find-Control 'REAL NATIVE SERVICE VIEW') } 'rendered native service document'
       if ($Mode -eq 'native') {
-        $Row=Find-Control 'Beta fixture' ([Windows.Automation.ControlType]::Button); $R=$Row.Current.BoundingRectangle
-        [ChromeNative]::ClickPoint($script:Window,[int]($R.Right-8),[int]($R.Top+$R.Height/2),$true)
+        Click-Service-Row
         Wait-For { [ChromeNative]::HasPopup($script:Child.Id) } 'system service menu preference'
         [Windows.Forms.SendKeys]::SendWait('{ESC}')
         Wait-For { -not [ChromeNative]::HasPopup($script:Child.Id) } 'dismissed system service menu'
         Check $true 'native service menu preference opens and dismisses a real system popup'
         Stop-Tauridium; continue
       }
-      $Row=Find-Control 'Beta fixture' ([Windows.Automation.ControlType]::Button); $R=$Row.Current.BoundingRectangle
+      Click-Service-Row
       $Outer=New-Object ChromeNative+Rect; [ChromeNative]::GetWindowRect($script:Window,[ref]$Outer) | Out-Null
-      [ChromeNative]::ClickPoint($script:Window,[int]($R.Right-8),[int]($R.Top+$R.Height/2),$true)
       [ChromeNative]::ClickPoint($script:Window,($Outer.Right-90),($Outer.Bottom-150),$false)
       $CancelledDeadline=[DateTime]::UtcNow.AddSeconds(10)
       do {
@@ -581,9 +747,9 @@ function Test-Service-Menus {
     Write-Test-Diagnostics
     throw
   } finally {
-    if ($script:Child -and -not $script:Child.HasExited) { Stop-Tauridium }
-    if (-not $Server.HasExited) { $Server.Kill(); $Server.WaitForExit(5000) | Out-Null }
-    $Server.Dispose()
+    try {
+      if ($script:Child -and -not $script:Child.HasExited) { Stop-Tauridium }
+    } finally { Stop-HttpFixtureServer $Server }
   }
 }
 try {
@@ -607,6 +773,8 @@ try {
   Wait-For { -not [ChromeNative]::HasPopup($script:Child.Id) } 'dismissed native popup'
   Invoke-Control 'Use Tauridium without an account'
   Open-Advanced
+  Test-Settings-Search
+  Test-Support-Information
   $Scale = [double][ChromeNative]::GetDpiForWindow($script:Window) / 96.0
   Check ($Scale -gt 0) 'native window DPI is available'
   Check ((Find-Control 'Unified title bar' ([Windows.Automation.ControlType]::CheckBox)).Current.BoundingRectangle.Width -le (48 * $Scale)) 'Advanced toggle has bounded switch geometry'

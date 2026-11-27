@@ -13,8 +13,13 @@ tested. Do not make Unix shells, WSL, or Nushell prerequisites for Windows devel
 ## Architecture
 
 - `src/`: Svelte 5 + TypeScript shell UI. Keep UI state predictable and responsive.
+- `src/components/`: settings tabs and shell views with typed props, callbacks and owning scoped styles.
+- `src/lib/controllers/*.svelte.ts`: per-owner rune state factories; application controllers use live typed host accessors; no mutable singletons.
+- `src/lib/appSettingsDefaults.ts`: independent initial preference records; see `docs/FRONTEND-ARCHITECTURE.md` for lifecycle and test ownership.
 - `src/lib/api.ts`: typed frontend boundary to Tauri commands.
-- `src-tauri/src/main.rs`: application/window/webview lifecycle and native commands.
+- `src-tauri/src/main.rs`: application bootstrap, shared state, window integration and remaining native commands.
+- `src-tauri/src/app_settings/`: settings defaults/validation, persistence and settings commands.
+- `src-tauri/src/services/`: lifecycle, service commands, native webview construction, navigation, downloads, storage, shortcuts and badge polling. Keep module helpers private or `pub(super)`; use `pub(crate)` only for cross-domain/command boundaries.
 - `src-tauri/src/{local_profile,backup,portable,audit,recipes,icons}.rs`: durable domain
   concerns; keep persistence and validation here rather than scattering them through UI.
 - `vendor/wry/`: intentionally vendored/patched WebView layer. Do not replace/update it

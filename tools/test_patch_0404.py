@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+from frontend_source import read_frontend_source
+from rust_sources import read_orchestration_sources
+
 import unittest
 from pathlib import Path
 
@@ -12,12 +15,12 @@ ROOT = Path(__file__).resolve().parents[1]
 class Patch0404Tests(unittest.TestCase):
   @classmethod
   def setUpClass(cls) -> None:
-    cls.main = (ROOT / "src-tauri/src/main.rs").read_text(encoding="utf-8")
+    cls.main = read_orchestration_sources(ROOT)
     cls.backup = (ROOT / "src-tauri/src/backup.rs").read_text(encoding="utf-8")
     cls.audit = (ROOT / "src-tauri/src/audit.rs").read_text(encoding="utf-8")
     cls.portable = (ROOT / "src-tauri/src/portable.rs").read_text(encoding="utf-8")
     cls.api = (ROOT / "src/lib/api.ts").read_text(encoding="utf-8")
-    cls.app = (ROOT / "src/App.svelte").read_text(encoding="utf-8")
+    cls.app = read_frontend_source(ROOT)
 
   def test_restore_does_not_roll_back_machine_autostart(self) -> None:
     body = self.main.split("fn perform_restore_backup", 1)[1].split("#[tauri::command]\nfn restore_backup", 1)[0]
@@ -135,8 +138,9 @@ class Patch0404Tests(unittest.TestCase):
       self.assertIn(marker, self.audit)
 
   def test_audit_tab_can_filter_refresh_export_and_clear(self) -> None:
+    self.assertIn('["audit", "Audit log"]', (ROOT / "src/lib/settingsSearch.ts").read_text(encoding="utf-8"))
     for marker in (
-      '["audit", "Audit log"]',
+
       '{:else if settingsTab === "audit"}',
       'placeholder="Search audit events…"',
       "Filter audit events by level",

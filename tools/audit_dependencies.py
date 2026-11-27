@@ -14,6 +14,7 @@ import tempfile
 
 import tauri_build
 import audit_local_npm
+import audit_picomatch
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCKS = ("src-tauri/Cargo.lock", "flatpak/tauri-cli.Cargo.lock")
@@ -62,6 +63,14 @@ def verify_controls(policy: dict) -> None:
     raise SystemExit("error: builder assessment requires key-free unsigned build configuration")
 
 
+def public_failure(error: BaseException) -> str:
+  # Never echo scanner/process/parser exception text. Only this exact known
+  # local policy condition gets an actionable static diagnostic.
+  if isinstance(error, audit_local_npm.AssessmentExpired):
+    return "error: local npm security assessment expired or unreviewed; re-review the exact backport and current advisory metadata"
+  return "error: current dependency advisory gate could not complete; private scanner diagnostics withheld"
+
+
 def main() -> int:
   parser = argparse.ArgumentParser(description=__doc__)
   parser.add_argument("--snapshot-db", type=Path, help="Explicit offline diagnostic snapshot; NOT the required current online gate")
@@ -78,6 +87,8 @@ def main() -> int:
   now = datetime.now(timezone.utc)
   local_npm = (audit_local_npm.check(ROOT, today=now.date()) if args.snapshot_db is None else
                {"currentOnlineGate": False, "status": "Not run in an offline RustSec diagnostic"})
+  local_glob = (audit_picomatch.check(ROOT, today=now.date()) if args.snapshot_db is None else
+                {"currentOnlineGate": False, "status": "Not run in an offline RustSec diagnostic"})
   with tempfile.TemporaryDirectory(prefix="tauridium-private-rustsec-") as temporary:
     root = Path(temporary)
     database = args.snapshot_db.resolve() if args.snapshot_db else root / "advisory-db"
@@ -101,12 +112,12 @@ def main() -> int:
                         "databaseCommit": revision,
                         "explicitAssessments": evaluate(lock, report, policy, now.date())})
     print(json.dumps({"passed": True, "databaseCommit": revision, "checkedAtUtc": now.isoformat(),
-                      "currentOnlineGate": args.snapshot_db is None, "localNpmBackports": local_npm, "locks": summaries}, indent=2))
+                      "currentOnlineGate": args.snapshot_db is None, "localNpmBackports": local_npm, "localGlobBackport": local_glob, "locks": summaries}, indent=2))
   return 0
 
 
 if __name__ == "__main__":
   try:
     raise SystemExit(main())
-  except (OSError, ValueError, KeyError, subprocess.SubprocessError):
-    raise SystemExit("error: current dependency advisory gate could not complete; private scanner diagnostics withheld") from None
+  except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+    raise SystemExit(public_failure(error)) from None

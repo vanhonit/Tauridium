@@ -2,6 +2,8 @@
 """Validate release-critical Tauridium source invariants without network access."""
 
 from __future__ import annotations
+from rust_sources import read_orchestration_sources
+from frontend_source import read_frontend_file, read_frontend_source
 
 import json
 import re
@@ -102,7 +104,7 @@ def main() -> int:
   lock = json.loads(read("package-lock.json"))
   cargo = read("src-tauri/Cargo.toml")
   cargo_lock = read("src-tauri/Cargo.lock")
-  main_rs = read("src-tauri/src/main.rs")
+  main_rs = read_orchestration_sources(ROOT)
   single_instance_rs = read("src-tauri/src/single_instance.rs")
   startup_diagnostics_rs = read("src-tauri/src/startup_diagnostics.rs")
   rust_toolchain = read("rust-toolchain.toml")
@@ -456,7 +458,7 @@ def main() -> int:
   if "Refusing a development-mode release binary" not in build_rs:
     fail("build script lacks an actionable development-mode release failure")
 
-  main_rs = read("src-tauri/src/main.rs")
+  main_rs = read_orchestration_sources(ROOT)
   window_state_test = read("tools/test_window_state.py")
   errno_lock = (
     'name = "errno"\n'
@@ -562,7 +564,7 @@ def main() -> int:
     fail("native Services menu still uses fixed generic numbered slots")
   api_ts = read("src/lib/api.ts")
   api_test_ts = read("src/lib/api.test.ts")
-  app = read("src/App.svelte")
+  app = read_frontend_source(ROOT)
   local_profile = read("src-tauri/src/local_profile.rs")
   recipes_rs = read("src-tauri/src/recipes.rs")
   backup_rs = read("src-tauri/src/backup.rs")
@@ -612,7 +614,7 @@ def main() -> int:
       fail(f"Tauri handler is missing {command}")
 
   for marker in (
-    'oncontextmenu={(e) => openServiceContextMenu(e, s)}',
+    'oncontextmenu={(e) => openServiceContextMenu(e, service)}',
     'const menu = await Menu.new({',
     'text: "Settings"',
     'text: "Reload"',
@@ -700,7 +702,7 @@ def main() -> int:
       fail(f"0.4.10 frontend invariant is missing: {marker}")
   for marker in (
     'let should_fetch = request.prefer_website_icon;',
-    'fn service_shortcut_bridge_js(settings: &Value, service_id: &str, nonce: &str)',
+    'pub(super) fn service_shortcut_bridge_js(\n    settings: &Value,\n    service_id: &str,\n    nonce: &str,\n)',
     'service_shortcut_action_from_url',
     'tauridium-shortcut://bridge/',
     'app.emit("shortcut-action", "reloadService".to_string())',
@@ -723,7 +725,7 @@ def main() -> int:
 
   patch_0411_test = read("tools/test_patch_0411.py")
   for marker in (
-    '{@const settingsServiceId = settingsSvc.id}',
+    'const settingsServiceId = $derived(settingsSvc.id)',
     '{@const joined = workspace.services.includes(settingsServiceId)}',
     'toggleCurrentServiceWorkspace(workspace',
   ):
@@ -759,12 +761,30 @@ def main() -> int:
     fail("frontend Tauri API test reintroduces a hoist-unsafe top-level invoke mock")
   if "Use Tauridium without an account" not in app:
     fail("login UI does not expose accountless mode")
+  settings_index = read("src/lib/settingsSearch.ts")
+  for tab, label in (
+    ("general", "General"), ("services", "Services"), ("workspaces", "Workspaces"),
+    ("appearance", "Appearance"), ("keybindings", "Keybinds"), ("sandbox", "Sandbox"),
+    ("privacy", "Privacy"), ("backup", "Backup"), ("audit", "Audit log"),
+    ("advanced", "Advanced"), ("updates", "Updates"), ("about", "About"),
+  ):
+    if f'["{tab}", "{label}"]' not in settings_index:
+      fail(f"shared Settings navigation is missing: {label}")
+  for marker in (
+    '["addWorkspace", "Add workspace", "Create a new workspace."]',
+    '["toggleSidebar", "Toggle sidebar"',
+  ):
+    if marker not in settings_index:
+      fail(f"shared Settings keybinding metadata is missing: {marker}")
+  for marker in ("{#each SETTINGS_TABS as", "{#each KEYBINDING_SETTINGS as"):
+    if marker not in app:
+      fail(f"Settings does not render its shared registry: {marker}")
   for marker in (
     'listen("open-about", openAbout)',
     'function openAbout()',
     'hideServices().catch',
     'settingsTab = "about"',
-    '["about", "About"]',
+
     '{:else if settingsTab === "about"}',
   ):
     if marker not in app:
@@ -893,7 +913,6 @@ def main() -> int:
     if marker not in restore_body and marker not in main_rs:
       fail(f"backup restore safety invariant is missing: {marker}")
   for marker in (
-    '["backup", "Backup"]',
     '{:else if settingsTab === "backup"}',
     'value="startup">On program startup</option>',
     'value="daily">Daily</option>',
@@ -993,9 +1012,9 @@ def main() -> int:
   for marker in (
     "saturation: saturation * 100",
     "lightness: lightness * 100",
-    "{Math.round(colorHue)}°",
-    "{Math.round(colorSaturation)}%",
-    "{Math.round(colorLightness)}%",
+    "{Math.round(appearance.colorHue)}°",
+    "{Math.round(appearance.colorSaturation)}%",
+    "{Math.round(appearance.colorLightness)}%",
   ):
     if marker not in app + read("src/lib/ui.ts"):
       fail(f"0.4.3 color-picker invariant is missing: {marker}")
@@ -1046,7 +1065,6 @@ def main() -> int:
       fail(f"0.4.4 portable export invariant is missing: {marker}")
 
   for marker in (
-    '["audit", "Audit log"]',
     'flex-wrap: wrap',
     'width: min(1180px, calc(100% - 32px))',
     'Service list alignment',
@@ -1063,7 +1081,6 @@ def main() -> int:
 
   workspace_test = read("tools/test_workspace_settings_0413.py")
   for marker in (
-    '["workspaces", "Workspaces"]',
     'workspaceQuickSwitchOrder: "custom" | "customReverse" | "alphabetical" | "alphabeticalReverse" | "recent" | "recentReverse"',
     'workspaceLastUsed: Record<string, number>',
     'orderWorkspacesForQuickSwitch(',
@@ -1152,7 +1169,7 @@ def main() -> int:
       fail(f"0.4.15 regression coverage is missing: {test_marker}")
 
   patch_0416 = read("tools/test_patch_0416.py")
-  service_workspace_block = app.split('<div class="set-title">Workspaces</div>', 1)[1].split(
+  service_workspace_block = read_frontend_file(ROOT, "src/components/ServiceSettingsPanel.svelte").split('<div class="set-title">Workspaces</div>', 1)[1].split(
     '<div class="set-title">Appearance</div>', 1
   )[0]
   for marker in (
@@ -1224,7 +1241,6 @@ def main() -> int:
   for marker in (
     'addWorkspace: "Ctrl+Shift+N"',
     'case "addWorkspace": openAddWorkspace(); break;',
-    '["addWorkspace", "Add workspace", "Create a new workspace."]',
   ):
     if marker not in ui_ts + app:
       fail(f"0.4.18 Add Workspace keybinding invariant is missing: {marker}")
@@ -1390,7 +1406,7 @@ def main() -> int:
     "return preferredWebsiteIcon(service) ?? iconSrc(service);",
     "src={displayedServiceIcon(service)}",
     "serviceIconFailed(service)",
-    "previous?.useFavicon !== true || !preferredWebsiteIcon(s)",
+    "previous?.useFavicon !== true || !host.preferredWebsiteIcon(s)",
   ):
     if marker not in app:
       fail(f"0.4.22 configured-service icon invariant is missing: {marker}")
@@ -1495,7 +1511,7 @@ def main() -> int:
     'options.set_enable_tracking_prevention(!(is_remote_http && relax_tracking));',
     'else if cfg!(windows) {',
     'if let Some(ua) = ua.as_deref()',
-    's.isBadgeEnabled !== false && (ownValue(unreadMap, s.id) ?? 0) > 0',
+    'service.isBadgeEnabled !== false && (ownValue(unreadMap, service.id) ?? 0) > 0',
     'Enable custom URL placeholders for this service',
     'showToast("Saved", "success")',
     '.toast.success { background: #187a45;',
@@ -1531,8 +1547,6 @@ def main() -> int:
       fail(f"0.4.27 regression coverage is missing: {test_marker}")
 
   for marker in (
-    '["keybindings", "Keybinds"]',
-    '["sandbox", "Sandbox"]',
     'appSettings.theme === "oled"',
     'const MANAGED_SERVICE_PAGE_SIZE = 100;',
     'quickWorkspaceSwitch: "Ctrl+D"',
@@ -2149,7 +2163,7 @@ def main() -> int:
     if invariant not in cargo_manifest:
       fail(f"0.7.5 temporary Tauri patch invariant is missing: {invariant}")
 
-  main_rs = read("src-tauri/src/main.rs")
+  main_rs = read_orchestration_sources(ROOT)
   if main_rs.count("if proton_compat::requires_tauri_marker_workaround(&host)") != 1:
     fail("Proton workaround must be injected exactly once at the service boundary")
 

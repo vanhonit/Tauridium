@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from frontend_source import read_frontend_source
+from rust_sources import read_orchestration_sources
+
 import json
 import re
 import unittest
@@ -11,10 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 class CustomRecipeReleaseTests(unittest.TestCase):
   @classmethod
   def setUpClass(cls) -> None:
-    cls.main = (ROOT / "src-tauri/src/main.rs").read_text(encoding="utf-8")
+    cls.main = read_orchestration_sources(ROOT)
     cls.recipes = (ROOT / "src-tauri/src/recipes.rs").read_text(encoding="utf-8")
     cls.profile = (ROOT / "src-tauri/src/local_profile.rs").read_text(encoding="utf-8")
-    cls.app = (ROOT / "src/App.svelte").read_text(encoding="utf-8")
+    cls.app = read_frontend_source(ROOT)
     cls.api = (ROOT / "src/lib/api.ts").read_text(encoding="utf-8")
 
   def test_bundled_recipe_endpoints_are_present(self) -> None:

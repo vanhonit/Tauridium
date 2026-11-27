@@ -1,13 +1,16 @@
 """Regression coverage for Tauridium 0.4.18 integrations."""
+
+from frontend_source import read_frontend_source
+from rust_sources import read_orchestration_sources
 from pathlib import Path
 import json
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = (ROOT / "src" / "App.svelte").read_text(encoding="utf-8")
+APP = read_frontend_source(ROOT)
 API = (ROOT / "src" / "lib" / "api.ts").read_text(encoding="utf-8")
 UI = (ROOT / "src" / "lib" / "ui.ts").read_text(encoding="utf-8")
-MAIN = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+MAIN = read_orchestration_sources(ROOT)
 RECIPES = (ROOT / "src-tauri" / "src" / "recipes.rs").read_text(encoding="utf-8")
 TAURI = json.loads((ROOT / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8"))
 
@@ -19,7 +22,7 @@ class Patch0418Tests(unittest.TestCase):
     self.assertIn('shortcut("addWorkspace")', MAIN)
     self.assertIn('"addWorkspace",', MAIN.split('const SHORTCUT_ACTIONS', 1)[1].split('fn effective_service_shortcut_capture', 1)[0])
     self.assertIn('case "addWorkspace": openAddWorkspace(); break;', APP)
-    self.assertIn('["addWorkspace", "Add workspace", "Create a new workspace."]', APP)
+    self.assertIn('["addWorkspace", "Add workspace", "Create a new workspace."]', (ROOT / "src/lib/settingsSearch.ts").read_text(encoding="utf-8"))
 
   def test_keybinding_merge_adds_new_defaults_without_resetting_existing_bindings(self) -> None:
     merge = MAIN.split('fn merge_app_settings_value', 1)[1].split('fn read_app_settings_value', 1)[0]

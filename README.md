@@ -34,6 +34,7 @@ To my knowledge, this is, as of now, the only fully open source, fully free of c
 * Bundled recipes, custom recipes and arbitrary HTTP(S) websites
 * Per-service behaviour including page zoom, notifications, badges, hibernation, appearance, proxy, user agent and link handling
 * Configurable themes, sidebar, keybindings and service interaction
+* [Settings search](docs/SETTINGS-SEARCH.md) with keyboard navigation and direct links to controls
 * Shared sandboxes for deliberately sharing login/session state between compatible services
 * Native notifications, tray operation, persistent window state and launch-at-login
 * Browser-style downloads with global, workspace and service configuration
@@ -53,6 +54,8 @@ scoop install tauridium
 ```
 
 Alternatively, download the native installer or x64/ARM64 portable ZIP from [GitHub Releases](https://github.com/Akkitto/Tauridium/releases/latest). Windows builds require the Microsoft Edge WebView2 Runtime, which is normally provided by supported Windows 10 releases and Windows 11.
+
+A self-contained [local Chocolatey package](packaging/chocolatey/README.md) can also be built from reviewed release installers and installed from a local folder; it is not submitted to the community feed.
 
 See [Installation](docs/installation.md) for package details, persistence behavior and release integrity, and [Scoop packaging](packaging/scoop/README.md) for the upstream submission fixture and validation flow.
 

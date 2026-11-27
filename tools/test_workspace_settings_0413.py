@@ -1,11 +1,14 @@
+
+from frontend_source import read_frontend_file, read_frontend_source
+from rust_sources import read_orchestration_sources
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = (ROOT / "src" / "App.svelte").read_text(encoding="utf-8")
+APP = read_frontend_source(ROOT)
 API = (ROOT / "src" / "lib" / "api.ts").read_text(encoding="utf-8")
 UI = (ROOT / "src" / "lib" / "ui.ts").read_text(encoding="utf-8")
-RUST = (ROOT / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+RUST = read_orchestration_sources(ROOT)
 
 
 class WorkspaceSettings0413Tests(unittest.TestCase):
@@ -15,7 +18,7 @@ class WorkspaceSettings0413Tests(unittest.TestCase):
     self.assertNotIn('view === "workspaces"', APP)
 
   def test_settings_has_workspace_management_tab(self):
-    self.assertIn('["workspaces", "Workspaces"]', APP)
+    self.assertIn('["workspaces", "Workspaces"]', (ROOT / "src/lib/settingsSearch.ts").read_text(encoding="utf-8"))
     self.assertIn('settingsTab === "workspaces"', APP)
     self.assertIn('Configured workspaces', APP)
     self.assertIn('Workspace settings ·', APP)
@@ -46,7 +49,7 @@ class WorkspaceSettings0413Tests(unittest.TestCase):
 
 
   def test_workspace_detail_replaces_long_list_and_confirms_unsaved_rename(self):
-    tab = APP.split('{:else if settingsTab === "workspaces"}', 1)[1].split('{:else if settingsTab === "appearance"}', 1)[0]
+    tab = read_frontend_file(ROOT, "src/components/SettingsWorkspaces.svelte")
     self.assertIn('{#if managedWorkspace}', tab)
     self.assertIn('{:else}', tab)
     self.assertLess(tab.index('Workspace settings ·'), tab.index('Quick workspace switcher'))

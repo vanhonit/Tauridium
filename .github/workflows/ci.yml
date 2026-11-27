@@ -17,6 +17,9 @@ env:
   NODE_OPTIONS: --no-deprecation
 
 jobs:
+  chocolatey:
+    uses: ./.github/workflows/chocolatey.yml
+
   security:
     uses: ./.github/workflows/security.yml
 
@@ -132,7 +135,8 @@ jobs:
 
   windows-native:
     needs: windows-verifier
-    if: ${{ always() }}
+    # Report verifier failures, but let superseded runs release their runners.
+    if: ${{ !cancelled() }}
     name: Windows native ${{ matrix.label }} full gates
     strategy:
       fail-fast: false

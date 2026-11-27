@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.0.14] - 2026-11-22
+
+- Fix the newly reported nested blob URL stack-overflow denial of service in both application and patched build tooling; add an origin-parsing regression.
+- Update Svelte, Vitest, Tauri JavaScript API/build support, regex and portal D-Bus dependencies together with their locked transitive fixes.
+- Refresh offline Flatpak sources, Nix dependency hashes and exact audit bindings while preserving reviewed security backports.
+- Complete verified v1.0.13 local Chocolatey consumption metadata and test native MSI upgrade/removal on Windows x64 and ARM64.
+
+## [1.0.13] - 2026-11-20
+
+- Add self-contained local Chocolatey packages from verified Windows x64/ARM64 MSI releases, without community-feed submission.
+- Preserve user data and MSI identity across native updates, Chocolatey upgrades and removal, with explicit architecture, installer integrity and conflict checks.
+- Add real native installation lifecycle, deterministic package and decoded artifact-security checks before release signing.
+
+## [1.0.12] - 2026-11-18
+
+- Prevent styled service menus and download notifications from creating unintended native Wayland windows and stalling rendering.
+- Keep service menus closed until all held pointer buttons are released, including chorded side-button input.
+- Add production native Wayland menu, input-recovery and download-notification regression checks alongside the existing X11 and Windows gates.
+- Backport the newly reported build-tool glob-matching denial-of-service fix with integrity, compatibility and live advisory controls.
+
 ## [1.0.11] - 2026-11-15
 
 - Keep the existing styled service context menu above native service views, preserving its actions, themes and system-menu preference.

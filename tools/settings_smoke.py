@@ -153,7 +153,7 @@ def main() -> int:
             assert size == (width, height), f"Requested window size was not rendered: {size}"
             assert "Startup" in text, text
             if args.service_id:
-              def open_identity_settings():
+              def open_identity_settings(*, expected_directory=None):
                 # Dense tab text needs line OCR, unlike sparse switch controls.
                 text, rows, _ = capture(window, f"{name}-identity-navigation", psm=6)
                 click(word(rows, "Services", rightmost=True))
@@ -170,10 +170,12 @@ def main() -> int:
                 for step in range(32):
                   text, rows, _ = capture(window, f"{name}-identity-downloads-{step}")
                   control = control_phrase(rows, "Override download settings for this service", checkbox=True)
-                  if control is not None:
+                  if control is not None and (expected_directory is None or expected_directory in text):
                     return text, rows, control
                   xdo("mousemove", "--sync", width - 25, height // 2)
-                  xdo("click", "--repeat", 3, "--delay", 30, 5)
+                  # Keep the override checkbox and its persisted directory visible
+                  # together on compact windows; the label can appear before the value.
+                  xdo("click", "--repeat", 1 if control is not None else 3, "--delay", 30, 5)
                   time.sleep(0.2)
                 raise RuntimeError("Service download settings failed to render for a special ID")
 
@@ -185,7 +187,7 @@ def main() -> int:
               top(width, height, steps=120)
               text, rows, _ = capture(window, f"{name}-identity-close")
               click(word(rows, "close"))
-              text, rows, control = open_identity_settings()
+              text, rows, control = open_identity_settings(expected_directory="System Downloads folder")
               assert "System Downloads folder" in text, "Saved special-ID override did not reopen"
               click(control)
               wait_for(lambda: saved("serviceDownloadSettings", {}), "special-ID override removal")
@@ -200,6 +202,104 @@ def main() -> int:
               reports.append({"serviceId": args.service_id, "size": [width, height], "ownOverridePersisted": True,
                               "reopened": True, "removed": True, "globalNavigation": True})
               continue
+            before_search = json.loads((data / "app_settings.json").read_text(encoding="utf-8"))
+
+            def search_capture(suffix, predicate, description, *, required_word=None):
+              rendered = []
+              def ready():
+                rendered[:] = capture(window, f"{name}-search-{suffix}")
+                control_ready = required_word is None or any(
+                  row["text"].strip().casefold() == required_word.casefold() for row in rendered[1])
+                return predicate(rendered[0]) and control_ready
+              wait_for(ready, description)
+              return rendered
+
+            def verify_search_value(expected):
+              # Use only this test's isolated X11 clipboard. Sparse-text OCR can
+              # omit an editable field even when it is visibly rendered correctly.
+              def copied_value():
+                xdo("key", "--clearmodifiers", "ctrl+a", "ctrl+c")
+                result = subprocess.run(["xclip", "-selection", "clipboard", "-out"],
+                                        capture_output=True, text=True, check=False, timeout=10)
+                return result.returncode == 0 and result.stdout == expected
+              wait_for(copied_value, "exact editable Settings search value")
+              xdo("key", "--clearmodifiers", "Right")
+
+            def enter_search_query(query):
+              xdo("key", "--clearmodifiers", "ctrl+f")
+              xdo("type", "--clearmodifiers", "--delay", "1", query)
+              verify_search_value(query)
+
+            def search_setting(query, caption, suffix):
+              enter_search_query(query)
+              search_capture(f"{suffix}-results", lambda text: "matching setting" in text.lower(), "rendered Settings search results")
+              xdo("key", "--clearmodifiers", "Return")
+              opened_text, opened_rows, _ = search_capture(f"{suffix}-opened", lambda text: caption in text, f"search destination: {caption}")
+              return opened_text, opened_rows
+
+            # This private X11 selection contains only a synthetic canary; never
+            # inspect the user's desktop clipboard.
+            clipboard_canary = "synthetic support clipboard canary"
+            enter_search_query("support information")
+            search_capture("support-results", lambda text: "matching setting" in text.lower(), "rendered support search results")
+            subprocess.run(["xclip", "-selection", "clipboard"], input=clipboard_canary, text=True, check=True, timeout=10)
+            xdo("key", "--clearmodifiers", "Return")
+            search_capture("support-opened", lambda text: "Copy support information" in text, "support search destination")
+            read_clipboard = lambda: subprocess.check_output(
+              ["xclip", "-selection", "clipboard", "-out"], text=True, timeout=10)
+            assert read_clipboard() == clipboard_canary, "Support navigation must not copy automatically"
+            for step in range(12):
+              text, rows, _ = capture(window, f"{name}-support-copy-{step}")
+              copy_control = control_phrase(rows, "Copy support information")
+              if copy_control is not None:
+                break
+              xdo("mousemove", "--sync", width - 25, height // 2)
+              xdo("click", "--repeat", 2, "--delay", 30, 5)
+              time.sleep(0.2)
+            else:
+              raise RuntimeError("Copy support information is not reachable")
+            # Search focuses the section heading; Tab reaches the copy button.
+            # Exercise its real keyboard activation as well as native readback.
+            xdo("key", "--clearmodifiers", "Tab", "Return")
+            search_capture("support-copied", lambda value: "Support information copied" in value, "native support clipboard acknowledgement")
+            copied_report = read_clipboard()
+            assert copied_report.startswith('```text\nTauridium support information\n'), "Native support report was not copied"
+            assert "Build mode: production" in copied_report, "Support report must identify the actual build"
+            assert "WebView engine: WebKitGTK" in copied_report
+            for private_value in (clipboard_canary, str(data), title, "https://example.invalid"):
+              assert private_value not in copied_report, "Support report included unrelated private data"
+            # Native keyboard navigation opens the disclosure and focuses the
+            # read-only preview without depending on OCR of a small disclosure.
+            xdo("key", "--clearmodifiers", "Tab", "space", "Tab")
+            capture(window, f"{name}-support-preview-open")
+            # The next focusable control is the read-only preview. Prove manual
+            # copying works by replacing the selection before the keyboard action.
+            subprocess.run(["xclip", "-selection", "clipboard"], input=clipboard_canary, text=True, check=True, timeout=10)
+            xdo("key", "--clearmodifiers", "ctrl+a", "ctrl+c")
+            wait_for(lambda: read_clipboard() == copied_report, "selectable support preview fallback")
+
+            search_setting("show service names", "Show service names", "services")
+            search_setting("parent folders", "Show download completion toasts", "prerequisite")
+            assert saved("downloadToasts", False), "Search must not enable a prerequisite setting"
+            search_setting("restore backup", "Manual backup", "action")
+            search_setting("theme", "Theme", "appearance")
+            search_setting("Advanced", "Service context menu", "tab-start")
+            assert json.loads((data / "app_settings.json").read_text(encoding="utf-8")) == before_search, "Search or navigation changed persisted settings"
+            enter_search_query("zzznosuchsettingzzz")
+            search_capture("no-results", lambda text: "No settings match" in text, "no-results feedback")
+            xdo("key", "--clearmodifiers", "Escape")
+            xdo("key", "--clearmodifiers", "Escape")
+            # Type without refocusing/selecting: any uncleared query would prefix
+            # this probe, so exact native clipboard readback proves the field cleared.
+            xdo("type", "--clearmodifiers", "--delay", "1", "clearprobe")
+            verify_search_value("clearprobe")
+            xdo("key", "--clearmodifiers", "Escape")
+            xdo("key", "--clearmodifiers", "Escape")
+            text, rows, _ = search_capture("cleared", lambda text: "No settings match" not in text, "cleared search and rendered General tab", required_word="General")
+            assert json.loads((data / "app_settings.json").read_text(encoding="utf-8")) == before_search, "Search queries or clearing changed persisted settings"
+            click(word(rows, "General"))
+            text, rows, _ = capture(window, f"{name}-search-return-general")
+            assert "Startup" in text, "Search trapped normal tab navigation"
             advanced = word(rows, "Advanced")
             click(advanced)
             text, rows, _ = capture(window, f"{name}-advanced")
@@ -298,7 +398,8 @@ def main() -> int:
             text, _, _ = capture(window, f"{name}-advanced-again")
             assert "Service context menu" in text, text
             reports.append({"theme": theme, "size": [width, height], "navigation": True,
-                            "closeAndReopen": True, "downloadControlsPersisted": True})
+                            "closeAndReopen": True, "downloadControlsPersisted": True,
+                            "settingsSearch": True, "searchPreservesPreferences": True, "supportClipboardRoundTrip": True, "supportPreviewFallback": True})
           except Exception:
             (output / f"{name}-failure-settings.json").write_text((data / "app_settings.json").read_text(encoding="utf-8"), encoding="utf-8")
             if window is not None and process.poll() is None:

@@ -38,6 +38,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
       ../../svelte.config.js
       ../../tsconfig.json
       ../../tools/check_deepmerge.mjs
+      ../../tools/check_picomatch.mjs
       ../../src
       ../../vendor
       ../../data
@@ -58,10 +59,10 @@ rustPlatform.buildRustPackage (finalAttrs: {
   cargoRoot = "src-tauri";
   buildAndTestSubdir = finalAttrs.cargoRoot;
   cargoDepsName = finalAttrs.pname;
-  cargoHash = "sha256-y5C4rXF8aX0dJlMnercSAZRoS1vKoTYrs+9YxpCwtIo=";
+  cargoHash = "sha256-eI4G/SCzVKZtmpMrn4Zsu04pzRzzUUTceAlCImXtTyk=";
   npmDeps = fetchNpmDeps {
     inherit (finalAttrs) src;
-    hash = "sha256-auKgKhLx4PzDOifpefuMSDvXi2i9gXfRydxrRuXwzIA=";
+    hash = "sha256-yKFisOXvVFIuPxWqmxkCAQ/q2L4rJfHN6xcwn4ltDy8=";
   };
   npmRoot = ".";
   env.npm_config_ignore_scripts = "true";

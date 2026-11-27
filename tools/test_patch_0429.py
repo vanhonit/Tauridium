@@ -3,14 +3,17 @@
 
 from __future__ import annotations
 
+from frontend_source import read_frontend_file, read_frontend_source
+from rust_sources import read_orchestration_sources
+
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = (ROOT / "src/App.svelte").read_text(encoding="utf-8")
+APP = read_frontend_source(ROOT)
 API = (ROOT / "src/lib/api.ts").read_text(encoding="utf-8")
 API_TEST = (ROOT / "src/lib/api.test.ts").read_text(encoding="utf-8")
-MAIN = (ROOT / "src-tauri/src/main.rs").read_text(encoding="utf-8")
+MAIN = read_orchestration_sources(ROOT)
 
 
 class Patch0429Tests(unittest.TestCase):
@@ -72,7 +75,7 @@ class Patch0429Tests(unittest.TestCase):
     self.assertIn("open_external(AUTHOR_HOMEPAGE)", events)
 
   def test_services_settings_page_exposes_create_service_action(self) -> None:
-    services_panel = APP.split('{:else if settingsTab === "services"}', 1)[1].split('{:else if settingsTab === "workspaces"}', 1)[0]
+    services_panel = read_frontend_file(ROOT, "src/components/SettingsServices.svelte")
     self.assertIn("Configured services", services_panel)
     self.assertIn('onclick={openAdd}>Create service</button>', services_panel)
     self.assertIn("Create a service above", services_panel)

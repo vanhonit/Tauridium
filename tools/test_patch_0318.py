@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+from frontend_source import read_frontend_source
+from rust_sources import read_orchestration_sources
+
 import subprocess
 import unittest
 from pathlib import Path
@@ -21,10 +24,10 @@ def project_files() -> list[Path]:
 class Patch0318Tests(unittest.TestCase):
   @classmethod
   def setUpClass(cls) -> None:
-    cls.app = (ROOT / "src/App.svelte").read_text(encoding="utf-8")
+    cls.app = read_frontend_source(ROOT)
     cls.api = (ROOT / "src/lib/api.ts").read_text(encoding="utf-8")
     cls.ui = (ROOT / "src/lib/ui.ts").read_text(encoding="utf-8")
-    cls.main = (ROOT / "src-tauri/src/main.rs").read_text(encoding="utf-8")
+    cls.main = read_orchestration_sources(ROOT)
 
   def test_manual_backup_name_contains_local_date_time_seconds_and_milliseconds(self) -> None:
     self.assertIn('return `tauridium-backup-${backupTimestamp()}.json`;', self.app)
